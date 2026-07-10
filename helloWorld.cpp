@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <algorithm>
 
 // Separates parts of each log entry
 const std::string DELIM = " - ";
@@ -26,8 +27,14 @@ enum ThreatLevel {
 struct LogEntry {
     Status status;
     std::string ip;
-    std::string raw;
     bool valid;
+};
+
+// Stores prioritised threat information for an IP
+struct PriorityEntry {
+    std::string ip;
+    int failures;
+    ThreatLevel level;
 };
 
 // Function declaration
@@ -36,15 +43,15 @@ ThreatLevel calculateThreat(int failures);
 std::string threatToString(ThreatLevel level);
 
 // Counts log results
-void analyzeLogs(const std::vector<LogEntry>& logs, int& alerts, int& successes, int& unknowns, int& invalids) {
-    alerts = successes = unknowns = invalids = 0;
+void analyzeLogs(const std::vector<LogEntry>& logs, int& failures, int& successes, int& unknowns, int& invalids) {
+    failures = successes = unknowns = invalids = 0;
     for (const auto& log : logs) {
         if (!log.valid) {
             invalids++;
             continue;
         }
         if (log.status == FAILED) {
-            alerts++;
+            failures++;
         }
         else if (log.status == SUCCESS) {
             successes++;
@@ -72,11 +79,11 @@ int main() {
     }
     file.close();
 // Store log analysis results
-    int alerts = 0;
+    int failures  = 0;
     int successes = 0;
-    int unknowns = 0;
-    int invalids = 0;
-    analyzeLogs(logs, alerts, successes, unknowns, invalids);
+    int unknowns  = 0;
+    int invalids  = 0;
+    analyzeLogs(logs, failures, successes, unknowns, invalids);
 // Calculate log totals
     int totalLogs = logs.size();
     int validLogs = totalLogs - invalids;
@@ -87,41 +94,49 @@ int main() {
             failedIPs[log.ip]++;
         }
     }
+// Create priority list from failed IP data
+    std::vector<PriorityEntry> priorityList;
+    for (const auto& ip : failedIPs) {
+        PriorityEntry entry;
+        entry.ip = ip.first;
+        entry.failures = ip.second;
+        entry.level = calculateThreat(ip.second);
+        priorityList.push_back(entry);
+    }
+// Sort priority list by failure count
+    auto compareFailures = [](const PriorityEntry& first, const PriorityEntry& second) {
+        return first.failures > second.failures;
+    };
+    std::sort(priorityList.begin(), priorityList.end(), compareFailures);
 // Display log analysis report
-    std::cout << "\n==================================================\n";
-    std::cout << "               LOG ANALYSIS REPORT\n";
-    std::cout << "==================================================\n\n";
+    std::cout << "\n==================================================\n"
+              << "               LOG ANALYSIS REPORT\n"
+              << "==================================================\n\n";
 // Display log statistics
-    std::cout << "Logs Processed : " << totalLogs << "\n";
-    std::cout << "Valid Logs     : " << validLogs << "\n";
-    std::cout << "Invalid Logs   : " << invalids << "\n\n";
+    std::cout << "Logs Processed : " << totalLogs << "\n"
+              << "Valid Logs     : " << validLogs << "\n"
+              << "Invalid Logs   : " << invalids << "\n\n";
 // Display event summary
-    std::cout << "---------------- Event Summary -------------------\n\n";
-    std::cout << "Failed Events  : " << alerts << "\n";
-    std::cout << "Successful     : " << successes << "\n";
-    std::cout << "Unknown Events : " << unknowns << "\n\n";
+    std::cout << "---------------- Event Summary -------------------\n\n"
+              << "Failed Events  : " << failures << "\n"
+              << "Successful     : " << successes << "\n"
+              << "Unknown Events : " << unknowns << "\n\n";
 // Display threat report
     std::cout << "---------------- Threat Report -------------------\n\n";
-    for (const auto& ip : failedIPs) {
-        ThreatLevel level = calculateThreat(ip.second);
-        std::cout << ip.first
-                  << "    "
-                  << ip.second
-                  << " failures   ["
-                  << threatToString(level)
-                  << "]\n";
+    for (const auto& entry : priorityList) {
+        std::cout << "IP Address : " << entry.ip << "\n"
+                  << "Failures   : " << entry.failures << "\n"
+                  << "Threat     : " << threatToString(entry.level) << "\n\n";
     }
-    std::cout << "\n==================================================\n";
+    std::cout << "==================================================\n";
 }
 
 // Converts a raw log line into a LogEntry object
 LogEntry parseLog(const std::string& line) {
     LogEntry entry;
 // Default values
-    entry.status = UNKNOWN; 
+    entry.status = UNKNOWN;
     entry.valid = true;
-    entry.raw = line;
-    entry.ip = "";
 // Find first separator
     size_t first = line.find(DELIM);
     if (first == std::string::npos) {
