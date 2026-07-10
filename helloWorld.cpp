@@ -41,28 +41,23 @@ void analyzeLogs(const std::vector<logEntry>& logs, int& alerts, int& successes,
 
 int main() {
     std::string line;
-    int number;
-    std::fstream file("logs.txt");
+    std::ifstream file("logs.txt");
     if (!file) {
         std::cout << "Could not open file.\n";
         return 1;
     }
-    std::cout << "Enter number of logs: ";
-    std::cin >> number;
-    std::cin.ignore();
     std::vector<logEntry> logs;
-    for (int i = 0; i < number; i++) {
-        std::cout << "Enter log line: ";
-        std::getline(std::cin, line);
+    while (std::getline(file, line)) {
         logEntry entry = parseLog(line);
         logs.push_back(entry);
     }
+    file.close();
     int alerts = 0;
     int successes = 0;
     int unknowns = 0;
     int invalids = 0;
     analyzeLogs(logs, alerts, successes, unknowns, invalids);
-    std::cout << "\nDUMPING STORED LOGS\n";
+    std::cout << "\nLOGS LOADED\n";
     for (const auto& log : logs) {
         std::cout << log.raw << "\n";
     }
@@ -78,6 +73,7 @@ logEntry parseLog(const std::string& line) {
     entry.status = UNKNOWN;
     entry.valid = true;
     entry.raw = line;
+    entry.ip = "";
     size_t first = line.find(DELIM);
     if (first == std::string::npos) {
         entry.valid = false;
