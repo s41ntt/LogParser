@@ -77,6 +77,9 @@ int main() {
     int unknowns = 0;
     int invalids = 0;
     analyzeLogs(logs, alerts, successes, unknowns, invalids);
+// Calculate log totals
+    int totalLogs = logs.size();
+    int validLogs = totalLogs - invalids;
 // Count failed attempts by IP address
     std::map<std::string, int> failedIPs;
     for (const auto& log : logs) {
@@ -84,30 +87,38 @@ int main() {
             failedIPs[log.ip]++;
         }
     }
-// Display loaded logs
-    std::cout << "\nLOGS LOADED\n";
-    for (const auto& log : logs) {
-        std::cout << log.raw << "\n";
-    }
-// Display overall log report
-    std::cout << "\nLOG REPORT\n";
-    std::cout << "Alerts = " << alerts << "\n";
-    std::cout << "Successes = " << successes << "\n";
-    std::cout << "Unknowns = " << unknowns << "\n";
-    std::cout << "Invalids = " << invalids << "\n";
-// Display failed IP report
-    std::cout << "\nFAILED IP REPORT\n";
+// Display log analysis report
+    std::cout << "\n==================================================\n";
+    std::cout << "               LOG ANALYSIS REPORT\n";
+    std::cout << "==================================================\n\n";
+// Display log statistics
+    std::cout << "Logs Processed : " << totalLogs << "\n";
+    std::cout << "Valid Logs     : " << validLogs << "\n";
+    std::cout << "Invalid Logs   : " << invalids << "\n\n";
+// Display event summary
+    std::cout << "---------------- Event Summary -------------------\n\n";
+    std::cout << "Failed Events  : " << alerts << "\n";
+    std::cout << "Successful     : " << successes << "\n";
+    std::cout << "Unknown Events : " << unknowns << "\n\n";
+// Display threat report
+    std::cout << "---------------- Threat Report -------------------\n\n";
     for (const auto& ip : failedIPs) {
         ThreatLevel level = calculateThreat(ip.second);
-        std::cout << ip.first << " = " << ip.second << " failures [" << threatToString(level) << "]\n";
+        std::cout << ip.first
+                  << "    "
+                  << ip.second
+                  << " failures   ["
+                  << threatToString(level)
+                  << "]\n";
     }
+    std::cout << "\n==================================================\n";
 }
 
 // Converts a raw log line into a LogEntry object
 LogEntry parseLog(const std::string& line) {
     LogEntry entry;
 // Default values
-    entry.status = UNKNOWN;
+    entry.status = UNKNOWN; 
     entry.valid = true;
     entry.raw = line;
     entry.ip = "";
