@@ -23,8 +23,17 @@ enum ThreatLevel {
     CRITICAL
 };
 
+// Represents the type of activity detected
+enum Action {
+    LOGIN,
+    PORT_SCAN,
+    FILE_ACCESS,
+    UNKNOWN_ACTION
+};
+
 // Stores information from one parsed log
 struct LogEntry {
+    Action action;
     Status status;
     std::string ip;
     bool valid;
@@ -34,13 +43,19 @@ struct LogEntry {
 struct PriorityEntry {
     std::string ip;
     int failures;
+    Action primaryAction;
+    int threatScore;
     ThreatLevel level;
+    std::string reason;
 };
 
 // Function declaration
 LogEntry parseLog(const std::string& line);
-ThreatLevel calculateThreat(int failures);
+ThreatLevel calculateThreat(int failures, Action action);
 std::string threatToString(ThreatLevel level);
+std::string actionToString(Action action);
+int calculateThreatScore(int failures, Action action);
+std::string generateThreatReason(int failures, Action action);
 
 // Counts log results
 void analyzeLogs(const std::vector<LogEntry>& logs, int& failures, int& successes, int& unknowns, int& invalids) {
@@ -62,7 +77,7 @@ void analyzeLogs(const std::vector<LogEntry>& logs, int& failures, int& successe
     }
 }
 
-// Main program
+// Main program execution
 int main() {
 // Read logs from file
     std::string line;
@@ -79,107 +94,191 @@ int main() {
     }
     file.close();
 // Store log analysis results
-    int failures  = 0;
+    int failures = 0;
     int successes = 0;
-    int unknowns  = 0;
-    int invalids  = 0;
+    int unknowns = 0;
+    int invalids = 0;
     analyzeLogs(logs, failures, successes, unknowns, invalids);
-// Calculate log totals
+    std::map<Action, int> actionCounts;
+    for (const auto& log : logs) {
+        if (!log.valid) {
+            continue;
+        }
+        actionCounts[log.action]++;
+    }
+// Store failed actions grouped by IP address
+    std::map<std::string, std::map<Action, int>> ipActions;
+    for (const auto& log : logs) {
+        if (!log.valid) {
+            continue;
+        }
+        if (log.status == FAILED) {
+            ipActions[log.ip][log.action]++;
+        }
+    }
     int totalLogs = logs.size();
     int validLogs = totalLogs - invalids;
 // Count failed attempts by IP address
     std::map<std::string, int> failedIPs;
     for (const auto& log : logs) {
-        if (log.status == FAILED) {
+        if (log.valid && log.status == FAILED) {
             failedIPs[log.ip]++;
         }
     }
-// Create priority list from failed IP data
+// Create prioritised threat entries from failed IP addresses
     std::vector<PriorityEntry> priorityList;
     for (const auto& ip : failedIPs) {
         PriorityEntry entry;
         entry.ip = ip.first;
         entry.failures = ip.second;
-        entry.level = calculateThreat(ip.second);
+        int highestCount = 0;
+        Action commonAction = UNKNOWN_ACTION;
+        for (const auto& actionCount : ipActions[ip.first]) {
+            if (actionCount.second > highestCount) {
+                highestCount = actionCount.second;
+                commonAction = actionCount.first;
+            }
+        }
+        entry.primaryAction = commonAction;
+        entry.level = calculateThreat(ip.second, entry.primaryAction);
+// Calculate numerical threat score and generate explanation
+        entry.threatScore = calculateThreatScore(ip.second, entry.primaryAction);
+        entry.reason = generateThreatReason(ip.second, entry.primaryAction);
         priorityList.push_back(entry);
     }
-// Sort priority list by failure count
-    auto compareFailures = [](const PriorityEntry& first, const PriorityEntry& second) {
-        return first.failures > second.failures;
+// Sort threats by severity, failure count, then IP address
+    auto compareThreatScore = [](const PriorityEntry& first, const PriorityEntry& second) {
+        if (first.threatScore != second.threatScore) {
+            return first.threatScore > second.threatScore;
+        }
+        if (first.failures != second.failures) {
+            return first.failures > second.failures;
+        }
+        return first.ip < second.ip;
     };
-    std::sort(priorityList.begin(), priorityList.end(), compareFailures);
+    std::sort(priorityList.begin(), priorityList.end(), compareThreatScore);
 // Display log analysis report
     std::cout << "\n==================================================\n"
               << "               LOG ANALYSIS REPORT\n"
               << "==================================================\n\n";
-// Display log statistics
-    std::cout << "Logs Processed : " << totalLogs << "\n"
+    std::cout << "[ FILE STATISTICS ]\n\n"
+              << "Logs Processed : " << totalLogs << "\n"
               << "Valid Logs     : " << validLogs << "\n"
               << "Invalid Logs   : " << invalids << "\n\n";
-// Display event summary
-    std::cout << "---------------- Event Summary -------------------\n\n"
+    std::cout << "[ EVENT SUMMARY ]\n\n"
               << "Failed Events  : " << failures << "\n"
               << "Successful     : " << successes << "\n"
               << "Unknown Events : " << unknowns << "\n\n";
-// Display threat report
-    std::cout << "---------------- Threat Report -------------------\n\n";
+    std::cout << "LOGIN         : " << actionCounts[LOGIN] << "\n"
+              << "PORT_SCAN     : " << actionCounts[PORT_SCAN] << "\n"
+              << "FILE_ACCESS   : " << actionCounts[FILE_ACCESS] << "\n"
+              << "UNKNOWN_ACTION: " << actionCounts[UNKNOWN_ACTION] << "\n\n";
+    std::cout << "[ THREAT REPORT ]\n\n";
     for (const auto& entry : priorityList) {
-        std::cout << "IP Address : " << entry.ip << "\n"
-                  << "Failures   : " << entry.failures << "\n"
-                  << "Threat     : " << threatToString(entry.level) << "\n\n";
+        std::cout << "IP Address      : " << entry.ip << "\n"
+                  << "Failed Attempts : " << entry.failures << "\n"
+                  << "Primary Action  : " << actionToString(entry.primaryAction) << "\n"
+                  << "Threat Score    : " << entry.threatScore << "\n"
+                  << "Threat Level    : " << threatToString(entry.level) << "\n"
+                  << "Reason          : " << entry.reason << "\n"
+                  << "--------------------------------------------------\n\n";
     }
     std::cout << "==================================================\n";
+    return 0;
 }
 
 // Converts a raw log line into a LogEntry object
 LogEntry parseLog(const std::string& line) {
     LogEntry entry;
-// Default values
     entry.status = UNKNOWN;
+    entry.action = UNKNOWN_ACTION;
     entry.valid = true;
-// Find first separator
     size_t first = line.find(DELIM);
     if (first == std::string::npos) {
         entry.valid = false;
         return entry;
     }
-// Find second separator
     size_t second = line.find(DELIM, first + DELIM.length());
     if (second == std::string::npos) {
         entry.valid = false;
         return entry;
     }
-// Extract status section
-    std::string statusStr = line.substr(first + DELIM.length(), second - (first + DELIM.length()));
-// Convert text status into enum
+    size_t third = line.find(DELIM, second + DELIM.length());
+    if (third == std::string::npos) {
+        entry.valid = false;
+        return entry;
+    }
+    std::string actionStr = line.substr(first + DELIM.length(), second - (first + DELIM.length()));
+    std::string statusStr = line.substr(second + DELIM.length(), third - (second + DELIM.length()));
+    entry.ip = line.substr(third + DELIM.length());
     if (statusStr == "FAILED") {
         entry.status = FAILED;
     }
     else if (statusStr == "SUCCESS") {
         entry.status = SUCCESS;
     }
-    else {
-        entry.status = UNKNOWN;
+    if (actionStr == "LOGIN") {
+        entry.action = LOGIN;
     }
-// Extract IP address
-    entry.ip = line.substr(second + DELIM.length());
+    else if (actionStr == "PORT_SCAN") {
+        entry.action = PORT_SCAN;
+    }
+    else if (actionStr == "FILE_ACCESS") {
+        entry.action = FILE_ACCESS;
+    }
     return entry;
 }
 
-// Determines threat level based on failed attempts
-ThreatLevel calculateThreat(int failures) {
-    if (failures >= 10) {
-        return CRITICAL;
+// Determines threat level based on failed attempts and action type
+ThreatLevel calculateThreat(int failures, Action action) {
+    if (action == PORT_SCAN) {
+        if (failures >= 5) {
+            return CRITICAL;
+        }
+        else if (failures >= 3) {
+            return ALERT;
+        }
+        else {
+            return SUSPICIOUS;
+        }
     }
-    else if (failures >= 6) {
-        return ALERT;
+    else if (action == FILE_ACCESS) {
+        if (failures >= 6) {
+            return CRITICAL;
+        }
+        else if (failures >= 3) {
+            return ALERT;
+        }
+        else {
+            return SUSPICIOUS;
+        }
     }
-    else if (failures >= 3) {
-        return SUSPICIOUS;
+    else if (action == LOGIN) {
+        if (failures >= 10) {
+            return CRITICAL;
+        }
+        else if (failures >= 6) {
+            return ALERT;
+        }
+        else if (failures >= 3) {
+            return SUSPICIOUS;
+        }
+        else {
+            return NORMAL;
+        }
     }
     else {
-        return NORMAL;
+        if (failures >= 5) {
+            return ALERT;
+        }
+        else if (failures >= 3) {
+            return SUSPICIOUS;
+        }
+        else {
+            return NORMAL;
+        }
     }
+    return NORMAL;
 }
 
 // Converts threat level enum to readable text
@@ -195,5 +294,52 @@ std::string threatToString(ThreatLevel level) {
     }
     else {
         return "CRITICAL";
+    }
+}
+
+// Converts action enum to readable text
+std::string actionToString(Action action) {
+    if (action == LOGIN) {
+        return "LOGIN";
+    }
+    else if (action == PORT_SCAN) {
+        return "PORT_SCAN";
+    }
+    else if (action == FILE_ACCESS) {
+        return "FILE_ACCESS";
+    }
+    else {
+        return "UNKNOWN_ACTION";
+    }
+}
+
+// Calculates threat score based on failures and action type
+int calculateThreatScore(int failures, Action action) {
+    int score = failures * 10;
+    if (action == PORT_SCAN) {
+        score += 20;
+    }
+    else if (action == FILE_ACCESS) {
+        score += 15;
+    }
+    else if (action == LOGIN) {
+        score += 10;
+    }
+    return score;
+}
+
+// Generates reason for threat based on action type
+std::string generateThreatReason(int failures, Action action) {
+    if (action == PORT_SCAN) {
+        return "Detected " + std::to_string(failures) + " failed port scan attempts";
+    }
+    else if (action == FILE_ACCESS) {
+        return "Detected " + std::to_string(failures) + " failed file access attempts";
+    }
+    else if (action == LOGIN) {
+        return "Detected " + std::to_string(failures) + " failed login attempts";
+    }
+    else {
+        return "Detected " + std::to_string(failures) + " unknown activities";
     }
 }
